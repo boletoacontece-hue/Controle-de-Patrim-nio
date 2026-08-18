@@ -1,0 +1,11 @@
+node_modules
+dist
+.env
+.env.example
+.env.local
+.DS_Store
+*.log
+
+# Exemplos e capturas: podem conter nomes de pessoas reais.
+# Ficam apenas na sua máquina, fora do repositório público.
+exemplos/
