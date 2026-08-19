@@ -103,6 +103,27 @@ export const extratoEstoque = (itemId) =>
 export const listarColaboradores = () =>
   sb.from('colaboradores').select('*').eq('ativo', true).order('nome');
 
+/** Inclui desligados — usado na tela de gestão de colaboradores. */
+export const listarTodosColaboradores = (busca) => {
+  let q = sb.from('colaboradores').select('*');
+  if (busca) {
+    const b = `%${busca}%`;
+    q = q.or(`nome.ilike.${b},cpf.ilike.${b},matricula.ilike.${b},setor.ilike.${b},cargo.ilike.${b}`);
+  }
+  return q.order('ativo', { ascending: false }).order('nome');
+};
+
+export const salvarColaborador = (c) =>
+  c.id
+    ? sb.from('colaboradores').update(c).eq('id', c.id).select().single()
+    : sb.from('colaboradores').insert(c).select().single();
+
+/** Bens sob responsabilidade de uma pessoa — o que trava um desligamento. */
+export const bensDoColaborador = (colaboradorId) =>
+  sb.from('vw_bens_completo').select('*')
+    .eq('responsavel_id', colaboradorId).eq('situacao', 'em_uso')
+    .order('codigo_patrimonio');
+
 export const listarLocalizacoes = () =>
   sb.from('localizacoes').select('*').eq('ativo', true).order('nome');
 

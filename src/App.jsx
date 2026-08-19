@@ -11,6 +11,7 @@ import Estoque from './pages/Estoque';
 import Termos from './pages/Termos';
 import Triagem from './pages/Triagem';
 import Convites from './pages/Convites';
+import Colaboradores from './pages/Colaboradores';
 import Declarar from './pages/Declarar';
 
 function ConfiguracaoAusente() {
@@ -122,6 +123,9 @@ function Casca({ acesso }) {
           <NavLink to="/imobilizado" className={({ isActive }) => (isActive ? 'ativo' : '')}>Imobilizado</NavLink>
           <NavLink to="/estoque" className={({ isActive }) => (isActive ? 'ativo' : '')}>Limpeza e utensílios</NavLink>
 
+          <div className="menu-grupo">Pessoas</div>
+          <NavLink to="/colaboradores" className={({ isActive }) => (isActive ? 'ativo' : '')}>Colaboradores</NavLink>
+
           <div className="menu-grupo">Documentos</div>
           <NavLink to="/termos" className={({ isActive }) => (isActive ? 'ativo' : '')}>Termos</NavLink>
           <NavLink to="/triagem" className={({ isActive }) => (isActive ? 'ativo' : '')}>Autodeclarações</NavLink>
@@ -143,6 +147,7 @@ function Casca({ acesso }) {
           <Route path="/mobiliario" element={<Bens grupo="mobiliario" podeEditar={podeEditar} />} />
           <Route path="/imobilizado" element={<Bens grupo="imobilizado" podeEditar={podeEditar} />} />
           <Route path="/estoque" element={<Estoque podeEditar={podeEditar} />} />
+          <Route path="/colaboradores" element={<Colaboradores podeEditar={podeEditar} />} />
           <Route path="/termos" element={<Termos podeEditar={podeEditar} />} />
           <Route path="/triagem" element={<Triagem podeEditar={podeEditar} />} />
           <Route path="/convites" element={<Convites />} />
