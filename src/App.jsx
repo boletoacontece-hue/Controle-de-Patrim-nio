@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
-import { sb, temAcesso, papelDoUsuario, listarPendencias } from './lib/supabase';
+import { sb, temAcesso, papelDoUsuario, listarPendencias, faltaConfiguracao } from './lib/supabase';
 import { Carregando } from './components/Comuns';
 import logoBranca from './lib/logo-acontece-branca.png';
 
@@ -13,6 +13,23 @@ import Triagem from './pages/Triagem';
 import Convites from './pages/Convites';
 import Declarar from './pages/Declarar';
 
+function ConfiguracaoAusente() {
+  return (
+    <div style={{ maxWidth: 520, margin: '80px auto', padding: 24, textAlign: 'center' }}>
+      <h1 style={{ marginBottom: 12 }}>Configuração incompleta</h1>
+      <p style={{ color: 'var(--tinta-media)' }}>
+        O sistema não recebeu o endereço do banco de dados e por isso não consegue iniciar.
+      </p>
+      <p style={{ color: 'var(--tinta-media)', fontSize: 13 }}>
+        Quem administra o sistema precisa definir <code>VITE_SUPABASE_URL</code> e{' '}
+        <code>VITE_SUPABASE_ANON_KEY</code> — no arquivo <code>.env</code> para execução local,
+        ou nos secrets do GitHub Actions para a versão publicada. Após cadastrar, é necessário
+        publicar novamente.
+      </p>
+    </div>
+  );
+}
+
 export default function App() {
   const [sessao, setSessao] = useState(undefined); // undefined = ainda verificando
   const [acesso, setAcesso] = useState(null);
@@ -22,6 +39,7 @@ export default function App() {
   const ehPublica = local.pathname.startsWith('/declarar');
 
   useEffect(() => {
+    if (faltaConfiguracao) return;
     sb.auth.getSession().then(({ data }) => setSessao(data.session));
     const { data: sub } = sb.auth.onAuthStateChange((_e, s) => setSessao(s));
     return () => sub.subscription.unsubscribe();
@@ -42,6 +60,8 @@ export default function App() {
       });
     })();
   }, [sessao]);
+
+  if (faltaConfiguracao) return <ConfiguracaoAusente />;
 
   if (ehPublica) {
     return (

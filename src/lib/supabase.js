@@ -3,12 +3,20 @@ import { createClient } from '@supabase/supabase-js';
 const URL = import.meta.env.VITE_SUPABASE_URL;
 const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-if (!URL || !KEY) {
-  console.error('Configure VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no arquivo .env');
+// Sem as variáveis, createClient lança exceção e derruba o app inteiro antes
+// de renderizar — tela branca, sem explicação. Detectamos aqui e deixamos a
+// interface exibir um aviso legível.
+export const faltaConfiguracao = !URL || !KEY;
+
+if (faltaConfiguracao) {
+  console.error(
+    'Configuração ausente: defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY. ' +
+    'Local: arquivo .env. Publicado: secrets do GitHub Actions.'
+  );
 }
 
 // Todo o sistema vive no schema `ativos`, exposto na Data API.
-export const sb = createClient(URL, KEY, {
+export const sb = createClient(URL || 'https://configuracao-ausente.invalid', KEY || 'sem-chave', {
   db: { schema: 'ativos' },
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
 });
