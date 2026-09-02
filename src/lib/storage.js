@@ -14,59 +14,52 @@ const BASE_PUBLICA = import.meta.env.VITE_R2_PUBLIC_URL;
 
 
 /**
- * Pede a URL assinada à Edge Function e devolve a causa real quando falha.
+ * Envia o arquivo ao R2 através da Edge Function.
  *
- * O supabase-js embrulha respostas de erro num objeto genérico; a mensagem
- * que a função escreveu fica em `error.context`. Sem abrir esse corpo, todo
- * problema — falta de permissão, segredo do R2 ausente, escopo inválido —
- * virava o mesmo "não foi possível", sem como diagnosticar.
+ * O caminho direto do navegador para o R2 não funciona: o endpoint S3 do R2
+ * não aplica a política de CORS do bucket, então o navegador bloqueia o PUT
+ * antes mesmo de tentar. Aqui o arquivo vai para a Edge Function, que
+ * responde com CORS liberado e faz o envio ao R2 pelo servidor, onde CORS
+ * não existe.
+ *
+ * Custo: os bytes trafegam duas vezes. Como as fotos são comprimidas para
+ * ~250 KB antes de sair do navegador, isso não pesa.
  */
-async function pedirUrlAssinada(corpo) {
-  const { data, error } = await sb.functions.invoke('r2-url-assinada', { body: corpo });
+async function enviarPelaFuncao(blob, key, contentType, escopo, token) {
+  const { data: sessao } = await sb.auth.getSession();
 
-  if (error) {
-    let detalhe = error.message || '';
-    try {
-      const corpoErro = await error.context?.json?.();
-      if (corpoErro?.error) detalhe = corpoErro.error;
-    } catch {
-      try { detalhe = (await error.context?.text?.()) || detalhe; } catch { /* mantém */ }
-    }
-    throw new Error(`O servidor de arquivos recusou o envio: ${detalhe}`);
+  const cabecalhos = {
+    'Content-Type': 'application/octet-stream',
+    'x-arquivo-chave': key,
+    'x-arquivo-tipo': contentType,
+    'x-arquivo-escopo': escopo,
+    apikey: import.meta.env.VITE_SUPABASE_ANON_KEY
+  };
+
+  // A página pública de autodeclaração não tem sessão: identifica-se pelo
+  // token do convite.
+  if (token) cabecalhos['x-convite-token'] = token;
+  if (sessao?.session?.access_token) {
+    cabecalhos.Authorization = `Bearer ${sessao.session.access_token}`;
   }
 
-  if (!data?.url) {
-    throw new Error(
-      'O servidor de arquivos não devolveu a URL de envio. Confira se os segredos ' +
-      'R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY e R2_BUCKET estão ' +
-      'cadastrados em Edge Functions › Secrets.'
-    );
-  }
-  return data.url;
-}
+  const endereco =
+    `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/r2-url-assinada`;
 
-/** Sobe os bytes para o R2 e explica o motivo em caso de recusa. */
-async function subirParaR2(url, blob, contentType) {
   let resp;
   try {
-    resp = await fetch(url, {
-      method: 'PUT',
-      headers: { 'Content-Type': contentType },
-      body: blob
-    });
-  } catch (e) {
-    // fetch só estoura assim quando o navegador bloqueia antes de enviar
-    throw new Error(
-      'O navegador bloqueou o envio ao R2. Isso costuma ser a política de CORS ' +
-      'do bucket: em Cloudflare › R2 › acontece-ativos › Configurações › CORS, ' +
-      'o método PUT e a origem deste site precisam estar liberados.'
-    );
+    resp = await fetch(endereco, { method: 'POST', headers: cabecalhos, body: blob });
+  } catch {
+    throw new Error('Não foi possível falar com o servidor de arquivos. Verifique a internet.');
   }
 
+  let corpo = null;
+  try { corpo = await resp.json(); } catch { /* resposta sem JSON */ }
+
   if (!resp.ok) {
-    const detalhe = await resp.text().catch(() => '');
-    throw new Error(`O R2 recusou o arquivo (HTTP ${resp.status}). ${detalhe.slice(0, 200)}`);
+    throw new Error(corpo?.error || `O envio falhou (HTTP ${resp.status}).`);
   }
+  return corpo?.key || key;
 }
 
 /** Monta a URL de exibição a partir da chave guardada no banco. */
@@ -125,8 +118,7 @@ export async function enviarFotoDeBem(file, codigoPatrimonio) {
   const { blob, width, height, tamanho } = await comprimirImagem(file);
   const key = montarChave(`bens/${codigoPatrimonio || 'sem-codigo'}`, file.name);
 
-  const url = await pedirUrlAssinada({ key, contentType: 'image/webp', escopo: 'bem' });
-  await subirParaR2(url, blob, 'image/webp');
+  await enviarPelaFuncao(blob, key, 'image/webp', 'bem');
 
   return { key, width, height, tamanho };
 }
@@ -141,8 +133,7 @@ export async function enviarFotoDeColeta(file, token) {
   const { blob } = await comprimirImagem(file, { maxLado: 1400, qualidade: 0.78 });
   const key = montarChave('coleta', file.name);
 
-  const url = await pedirUrlAssinada({ key, contentType: 'image/webp', escopo: 'coleta', token });
-  await subirParaR2(url, blob, 'image/webp');
+  await enviarPelaFuncao(blob, key, 'image/webp', 'coleta', token);
 
   return { key };
 }
@@ -164,8 +155,7 @@ export async function enviarPdfDeTermo(blob, numero, tipo = 'emitido') {
 
   const key = `termos/${ano}/${numero}${tipo === 'assinado' ? '-assinado' : ''}.${extensao}`;
 
-  const url = await pedirUrlAssinada({ key, contentType, escopo: 'termo' });
-  await subirParaR2(url, blob, contentType);
+  await enviarPelaFuncao(blob, key, contentType, 'termo');
 
   return key;
 }
