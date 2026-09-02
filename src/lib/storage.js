@@ -12,6 +12,63 @@ import { sb } from './supabase';
 
 const BASE_PUBLICA = import.meta.env.VITE_R2_PUBLIC_URL;
 
+
+/**
+ * Pede a URL assinada à Edge Function e devolve a causa real quando falha.
+ *
+ * O supabase-js embrulha respostas de erro num objeto genérico; a mensagem
+ * que a função escreveu fica em `error.context`. Sem abrir esse corpo, todo
+ * problema — falta de permissão, segredo do R2 ausente, escopo inválido —
+ * virava o mesmo "não foi possível", sem como diagnosticar.
+ */
+async function pedirUrlAssinada(corpo) {
+  const { data, error } = await sb.functions.invoke('r2-url-assinada', { body: corpo });
+
+  if (error) {
+    let detalhe = error.message || '';
+    try {
+      const corpoErro = await error.context?.json?.();
+      if (corpoErro?.error) detalhe = corpoErro.error;
+    } catch {
+      try { detalhe = (await error.context?.text?.()) || detalhe; } catch { /* mantém */ }
+    }
+    throw new Error(`O servidor de arquivos recusou o envio: ${detalhe}`);
+  }
+
+  if (!data?.url) {
+    throw new Error(
+      'O servidor de arquivos não devolveu a URL de envio. Confira se os segredos ' +
+      'R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY e R2_BUCKET estão ' +
+      'cadastrados em Edge Functions › Secrets.'
+    );
+  }
+  return data.url;
+}
+
+/** Sobe os bytes para o R2 e explica o motivo em caso de recusa. */
+async function subirParaR2(url, blob, contentType) {
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': contentType },
+      body: blob
+    });
+  } catch (e) {
+    // fetch só estoura assim quando o navegador bloqueia antes de enviar
+    throw new Error(
+      'O navegador bloqueou o envio ao R2. Isso costuma ser a política de CORS ' +
+      'do bucket: em Cloudflare › R2 › acontece-ativos › Configurações › CORS, ' +
+      'o método PUT e a origem deste site precisam estar liberados.'
+    );
+  }
+
+  if (!resp.ok) {
+    const detalhe = await resp.text().catch(() => '');
+    throw new Error(`O R2 recusou o arquivo (HTTP ${resp.status}). ${detalhe.slice(0, 200)}`);
+  }
+}
+
 /** Monta a URL de exibição a partir da chave guardada no banco. */
 export const urlDaFoto = (storageKey) =>
   storageKey ? `${BASE_PUBLICA}/${storageKey}` : null;
@@ -68,17 +125,8 @@ export async function enviarFotoDeBem(file, codigoPatrimonio) {
   const { blob, width, height, tamanho } = await comprimirImagem(file);
   const key = montarChave(`bens/${codigoPatrimonio || 'sem-codigo'}`, file.name);
 
-  const { data, error } = await sb.functions.invoke('r2-url-assinada', {
-    body: { key, contentType: 'image/webp', escopo: 'bem' }
-  });
-  if (error) throw new Error('Não foi possível preparar o envio da foto.');
-
-  const resp = await fetch(data.url, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'image/webp' },
-    body: blob
-  });
-  if (!resp.ok) throw new Error('O envio da foto falhou. Tente novamente.');
+  const url = await pedirUrlAssinada({ key, contentType: 'image/webp', escopo: 'bem' });
+  await subirParaR2(url, blob, 'image/webp');
 
   return { key, width, height, tamanho };
 }
@@ -93,37 +141,31 @@ export async function enviarFotoDeColeta(file, token) {
   const { blob } = await comprimirImagem(file, { maxLado: 1400, qualidade: 0.78 });
   const key = montarChave('coleta', file.name);
 
-  const { data, error } = await sb.functions.invoke('r2-url-assinada', {
-    body: { key, contentType: 'image/webp', escopo: 'coleta', token }
-  });
-  if (error) throw new Error('Não foi possível preparar o envio da foto.');
-
-  const resp = await fetch(data.url, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'image/webp' },
-    body: blob
-  });
-  if (!resp.ok) throw new Error('O envio da foto falhou. Tente novamente.');
+  const url = await pedirUrlAssinada({ key, contentType: 'image/webp', escopo: 'coleta', token });
+  await subirParaR2(url, blob, 'image/webp');
 
   return { key };
 }
 
-/** Envia o PDF do termo (emitido ou digitalização assinada). */
+/**
+ * Envia o termo: o PDF gerado pelo sistema ou a digitalização assinada.
+ *
+ * O tipo vem do próprio arquivo. Antes era sempre `application/pdf`, então
+ * uma digitalização em JPG era gravada como PDF e não abria no navegador.
+ */
 export async function enviarPdfDeTermo(blob, numero, tipo = 'emitido') {
   const ano = new Date().getFullYear();
-  const key = `termos/${ano}/${numero}${tipo === 'assinado' ? '-assinado' : ''}.pdf`;
+  const contentType = blob.type || 'application/pdf';
 
-  const { data, error } = await sb.functions.invoke('r2-url-assinada', {
-    body: { key, contentType: 'application/pdf', escopo: 'termo' }
-  });
-  if (error) throw new Error('Não foi possível preparar o envio do arquivo.');
+  const extensao =
+    contentType === 'application/pdf' ? 'pdf' :
+    contentType === 'image/png' ? 'png' :
+    contentType.startsWith('image/') ? 'jpg' : 'pdf';
 
-  const resp = await fetch(data.url, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/pdf' },
-    body: blob
-  });
-  if (!resp.ok) throw new Error('O envio do arquivo falhou. Tente novamente.');
+  const key = `termos/${ano}/${numero}${tipo === 'assinado' ? '-assinado' : ''}.${extensao}`;
+
+  const url = await pedirUrlAssinada({ key, contentType, escopo: 'termo' });
+  await subirParaR2(url, blob, contentType);
 
   return key;
 }

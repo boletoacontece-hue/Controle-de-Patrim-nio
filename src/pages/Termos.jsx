@@ -230,8 +230,9 @@ function DetalheTermo({ termo, podeEditar, aoFechar, aoMudar }) {
         }).eq('id', termo.id);
         setOk('Termo emitido. Imprima em duas vias para assinatura.');
       }
-    } catch {
-      setErro('Não foi possível gerar o PDF.');
+    } catch (e) {
+      console.error('Falha ao gerar/enviar o PDF do termo', e);
+      setErro(e.message || 'Não foi possível gerar o PDF.');
     }
     setOcupado(false);
   }
@@ -248,8 +249,11 @@ function DetalheTermo({ termo, podeEditar, aoFechar, aoMudar }) {
       if (error) throw error;
       setOk('Termo assinado registrado.');
       setTimeout(aoMudar, 800);
-    } catch {
-      setErro('Não foi possível anexar o documento assinado.');
+    } catch (e) {
+      // Mostra a causa real: sem ela, não há como distinguir CORS de
+      // permissão, de segredo ausente ou de arquivo grande demais.
+      console.error('Falha ao anexar termo assinado', e);
+      setErro(e.message || 'Não foi possível anexar o documento assinado.');
     }
     setOcupado(false);
     e.target.value = '';
@@ -310,7 +314,8 @@ function DetalheTermo({ termo, podeEditar, aoFechar, aoMudar }) {
       {podeEditar && termo.status === 'emitido' && (
         <div className="campo" style={{ marginTop: 18 }}>
           <label>Anexar termo assinado</label>
-          <input type="file" accept="application/pdf,image/*" onChange={anexarAssinado} disabled={ocupado} />
+          <input type="file" accept="application/pdf,image/jpeg,image/png"
+                 onChange={anexarAssinado} disabled={ocupado} />
           <div className="ajuda">
             Digitalize a via assinada pelo colaborador e anexe aqui. Só então o termo consta como assinado.
           </div>
