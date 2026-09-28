@@ -30,6 +30,17 @@ const PREFIXOS: Record<string, string> = {
   termo: 'termos/'
 };
 
+/**
+ * Lê o segredo já limpo.
+ *
+ * Valor colado com quebra de linha ou espaço no fim entra literalmente no
+ * cabeçalho `Authorization` da assinatura AWS — e cabeçalho HTTP não aceita
+ * nova linha. O erro que aparece é "Invalid header value", que não diz nada
+ * sobre a origem. Limpar aqui evita depender de o valor ter sido colado com
+ * cuidado.
+ */
+const segredo = (nome: string) => (Deno.env.get(nome) ?? '').trim();
+
 const recusar = (mensagem: string, status = 400) => {
   console.error(`[r2-url-assinada] recusado (${status}): ${mensagem}`);
   return new Response(JSON.stringify({ error: mensagem }), {
@@ -48,7 +59,7 @@ Deno.serve(async (req) => {
   // que não ajudava em nada.
   // ------------------------------------------------------------------
   const faltando = ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET']
-    .filter((nome) => !Deno.env.get(nome));
+    .filter((nome) => !segredo(nome));
 
   if (faltando.length) {
     return recusar(
@@ -68,6 +79,19 @@ Deno.serve(async (req) => {
   // esta função responde com CORS liberado, o arquivo passa por aqui e o
   // envio ao R2 acontece do lado do servidor, onde CORS não existe.
   const enviarDireto = !!req.headers.get('x-arquivo-chave');
+
+  // Mesmo com trim, um valor colado com quebra NO MEIO passaria adiante e
+  // quebraria na assinatura com uma mensagem obscura. Melhor avisar aqui.
+  const sujos = ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET']
+    .filter((nome) => /[\r\n\s]/.test(segredo(nome)));
+
+  if (sujos.length) {
+    return recusar(
+      `Os segredos ${sujos.join(', ')} contêm espaço ou quebra de linha. ` +
+      'Cadastre novamente em Edge Functions › Secrets, colando o valor sem espaços.',
+      500
+    );
+  }
 
   let key: string | undefined;
   let contentType: string | undefined;
@@ -112,15 +136,15 @@ Deno.serve(async (req) => {
   }
   if (key.length > 400) return recusar('Nome de arquivo muito longo.');
 
-  const urlSupabase = Deno.env.get('SUPABASE_URL')!;
-  const chaveAnon = Deno.env.get('SUPABASE_ANON_KEY')!;
+  const urlSupabase = segredo('SUPABASE_URL');
+  const chaveAnon = segredo('SUPABASE_ANON_KEY');
 
   if (escopo === 'coleta') {
     // Anônimo, porém só com convite válido: sem isso, qualquer um encheria
     // o bucket. A validação usa a chave de serviço porque não há sessão.
     if (!token) return recusar('Link de coleta ausente.', 401);
 
-    const servico = createClient(urlSupabase, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    const servico = createClient(urlSupabase, segredo('SUPABASE_SERVICE_ROLE_KEY'));
     const { data, error } = await servico.rpc('abrir_convite', { p_token: token });
 
     if (error) {
@@ -176,12 +200,12 @@ Deno.serve(async (req) => {
   // ------------------------------------------------------------------
   // Assinatura
   // ------------------------------------------------------------------
-  const conta = Deno.env.get('R2_ACCOUNT_ID')!;
-  const bucket = Deno.env.get('R2_BUCKET')!;
+  const conta = segredo('R2_ACCOUNT_ID');
+  const bucket = segredo('R2_BUCKET');
 
   const r2 = new AwsClient({
-    accessKeyId: Deno.env.get('R2_ACCESS_KEY_ID')!,
-    secretAccessKey: Deno.env.get('R2_SECRET_ACCESS_KEY')!,
+    accessKeyId: segredo('R2_ACCESS_KEY_ID'),
+    secretAccessKey: segredo('R2_SECRET_ACCESS_KEY'),
     service: 's3',
     region: 'auto'
   });

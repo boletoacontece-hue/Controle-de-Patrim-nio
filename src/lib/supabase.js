@@ -141,18 +141,30 @@ export const listarTermos = () =>
   sb.from('termos').select('*, colaboradores(nome, cpf, cargo, setor)')
     .order('data_emissao', { ascending: false });
 
+/**
+ * Emite o termo pela função do banco.
+ *
+ * A versão anterior montava os itens aqui e omitia `estado_conservacao`, então
+ * o banco aplicava o padrão da coluna ("bom") — um bem cadastrado como Novo
+ * saía como Bom no termo impresso. A função copia o estado do próprio bem e
+ * ainda faz numeração, termo e itens numa única transação, de modo que uma
+ * falha no meio não consome número da sequência.
+ *
+ * O `.schema('public')` é necessário porque o cliente aponta para `ativos` por
+ * padrão, e a função vive em `public` para ser alcançável também pelo
+ * aplicativo Android.
+ */
 export async function criarTermo(colaboradorId, bemIds, observacoes) {
-  const { data: numero, error: e1 } = await sb.rpc('proximo_numero_termo');
-  if (e1) throw e1;
+  const { data, error } = await sb.schema('public').rpc('emitir_termo', {
+    p_colaborador_id: colaboradorId,
+    p_bem_ids: bemIds,
+    p_observacoes: observacoes || null
+  });
+  if (error) throw error;
 
-  const { data: termo, error: e2 } = await sb.from('termos')
-    .insert({ numero, colaborador_id: colaboradorId, status: 'rascunho', observacoes })
-    .select().single();
+  const { data: termo, error: e2 } = await sb
+    .from('termos').select('*').eq('id', data.id).single();
   if (e2) throw e2;
-
-  const itens = bemIds.map((bem_id, i) => ({ termo_id: termo.id, bem_id, ordem: i }));
-  const { error: e3 } = await sb.from('termo_itens').insert(itens);
-  if (e3) throw e3;
 
   return termo;
 }
